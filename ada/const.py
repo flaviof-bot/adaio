@@ -18,6 +18,15 @@ AIO_MEMORY = 'device-free-memory'
 AIO_UPTIME_MINUTES = 'device-uptime'
 AIO_CPU = 'cpu-load'
 
+# Dotted '<group>.<feed>' keys that must never be published to Adafruit IO.
+AIO_FEED_DENYLIST = frozenset([
+    'electric-watts.sensor-mystery-motor-1-power-watts',
+])
+# Maximum seconds to suppress an unchanged publish before sending a heartbeat.
+AIO_PUBLISH_DEDUP_MAX_AGE_SECS = 3600
+# Dotted '<group>.<feed>' keys that must publish every value even when unchanged.
+AIO_FEED_DEDUP_EXEMPT = frozenset()
+
 AIO_LOCAL_CMD = "/aio/local/cmd"
 AIO_LOCAL_CMD_GET_LOCAL_TIME_WEATHER = "get_local_time_and_weather"
 

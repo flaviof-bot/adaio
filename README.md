@@ -34,6 +34,23 @@ tweaks will be needed for leveraging this repo for others.
 Also check the _processMqttMsgEvent_ function in [main.py](https://github.com/flavio-fernandes/adaio/blob/a5f9f46d5ee3ebcf5fb4b6cde4eabcddb65eb7fa/ada/main.py#L110)
 for additional changes you may [not] want in your deployment.
 
+### Adafruit IO publish filtering
+
+`const.py` also holds the publish-volume controls for values sent to Adafruit IO.
+`AIO_FEED_DENYLIST` is a `frozenset` of feed keys that are never published.
+Use dotted feed keys: `<group>.<feed>` for grouped feeds, or just `<feed>` when
+there is no group. Group underscores are normalized to dashes, matching the
+Adafruit IO feed naming used elsewhere in this repo.
+
+`AIO_PUBLISH_DEDUP_MAX_AGE_SECS` controls unchanged-value suppression. When a
+feed has already been published with the same value, another identical value is
+skipped until this age is reached. The state is in-memory and per process, so a
+restart forgets prior publishes and sends fresh values again. The default 3600
+seconds gives a one-hour heartbeat guarantee: a live feed with an unchanged
+value is still republished at least once an hour. Feeds listed in
+`AIO_FEED_DEDUP_EXEMPT` bypass unchanged-value suppression and publish every
+value.
+
 ## Vagrant
 
 The [Vagrantfile](https://github.com/flavio-fernandes/adaio/blob/master/Vagrantfile)
