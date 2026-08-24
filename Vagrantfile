@@ -118,18 +118,9 @@ Vagrant.configure(2) do |config|
     config.vm.provision :shell do |shell|
         shell.path = 'provision/provision_mqtt_broker.sh'
     end
-    # config.vm.provision :shell do |shell|
-    #     shell.privileged = false
-    #     shell.path = 'provision/provision_ring_mqtt.sh'
-    # end
 
     config.vm.provision "py38", type: "shell",
         inline: $py38
-
-    config.vm.provision :shell do |shell|
-        shell.privileged = false
-        shell.path = 'provision/provision_evbays.sh'
-    end
 
     config.vm.provision "bootstrap_basic_always", type: "shell",
         run: "always",

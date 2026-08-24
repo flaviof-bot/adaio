@@ -4,26 +4,22 @@ from collections import namedtuple
 
 TOPIC_ENTRY = namedtuple("TOPIC_ENTRY", "local group_id feed_id")
 
-AIO_EV_BAYS = "ev"
 AIO_HOME_TEMP = 'home-temperature'
 AIO_HOME_HUMIDITY = 'home-humidity'
 AIO_HOME_LIGHT = 'home-lux'
 AIO_HOME_MOTION = 'home-motion'
 AIO_HOME_ZONE = 'home-zone'
 AIO_HOME_CONTACT = AIO_HOME_ZONE
-AIO_HOME_MOTION_ATTIC = '{}.attic'.format(AIO_HOME_MOTION)
-AIO_HOME_MOTION_ATTIC_CAM = '{}.attic-camera'.format(AIO_HOME_MOTION)
 AIO_HOME_ELECTRIC = 'electric-meters'
+AIO_HOME_ELECTRIC_WATTS = 'electric-watts'
 AIO_HOME_ELECTRIC_DEVICE = 'home-device'
-AIO_HOME_SOLAR_RATE = 'solar-rate'
+AIO_HOME_EV_CHARGER = 'home-ev-charger'
 AIO_MEMORY = 'device-free-memory'
 AIO_UPTIME_MINUTES = 'device-uptime'
+AIO_CPU = 'cpu-load'
 
 AIO_LOCAL_CMD = "/aio/local/cmd"
 AIO_LOCAL_CMD_GET_LOCAL_TIME_WEATHER = "get_local_time_and_weather"
-AIO_RING_CMD = "/aio/ring/cmd"
-AIO_RING_CMD_RESTART = "restart"
-AIO_LOCAL_EVBAYS = "/evbays"
 
 AIO_GROUPS = [AIO_HOME_TEMP, AIO_HOME_HUMIDITY, AIO_HOME_MOTION, AIO_HOME_ELECTRIC,
               AIO_HOME_ELECTRIC_DEVICE]
@@ -31,7 +27,6 @@ AIO_GROUPS = [AIO_HOME_TEMP, AIO_HOME_HUMIDITY, AIO_HOME_MOTION, AIO_HOME_ELECTR
 # topics triggered locally
 LOCAL_ENTRIES = [
     TOPIC_ENTRY(AIO_LOCAL_CMD, AIO_LOCAL_CMD, "local-cmd"),
-    TOPIC_ENTRY(AIO_RING_CMD, AIO_RING_CMD, "ring-mqtt-cmd"),
 
     TOPIC_ENTRY("/openweather/temp_min", AIO_HOME_TEMP, "minimum"),
     TOPIC_ENTRY("/openweather/temp_max", AIO_HOME_TEMP, "maximum"),
@@ -56,7 +51,8 @@ LOCAL_ENTRIES = [
 
     TOPIC_ENTRY("/attic/light", AIO_HOME_LIGHT, "attic"),
     TOPIC_ENTRY("/garage/light", AIO_HOME_LIGHT, "garage"),
-    TOPIC_ENTRY("/officeClock/light", AIO_HOME_LIGHT, "office"),
+    ## duplicate of /officeclock/oper_state/light_sensor TOPIC_ENTRY("/officeClock/light", AIO_HOME_LIGHT, "office"),
+    TOPIC_ENTRY("/officeclock/oper_state/light_sensor", AIO_HOME_LIGHT, "office"),
     TOPIC_ENTRY("/basement_window/light", AIO_HOME_LIGHT, "basement"),
     TOPIC_ENTRY("/pyportalhallway/light", AIO_HOME_LIGHT, "pyportal-hallway"),
     TOPIC_ENTRY("/pyportalkitchen/light", AIO_HOME_LIGHT, "pyportal-kitchen"),
@@ -73,14 +69,20 @@ LOCAL_ENTRIES = [
 
     TOPIC_ENTRY("/buttonbox2/uptime", AIO_UPTIME_MINUTES, "trellis-office"),
     TOPIC_ENTRY("/buttonbox2/memory", AIO_MEMORY, "trellis-office"),
+    TOPIC_ENTRY("/officeclock/oper_state/mem_available_kb", AIO_MEMORY, "oclock-available-kb"),
+    TOPIC_ENTRY("/officeclock/oper_state/mem_free_kb", AIO_MEMORY, "oclock-free-kb"),
 
-    # Note: attic motions are local, but treated as remote entries
-    #       so they are not to be part of this block
+    TOPIC_ENTRY("/officeclock/oper_state/cpu_load_1min", AIO_CPU, "oclock-load-1min"),
+    TOPIC_ENTRY("/officeclock/oper_state/cpu_load_5min", AIO_CPU, "oclock-load-5min"),
+    TOPIC_ENTRY("/officeclock/oper_state/cpu_load_15min", AIO_CPU, "oclock-load-15min"),
+
+    TOPIC_ENTRY("/attic/motion", AIO_HOME_MOTION, "attic"),
     TOPIC_ENTRY("/garage/oper_flag/motion", AIO_HOME_MOTION, "garage"),
     TOPIC_ENTRY("/garage_steps/oper_flag/motion", AIO_HOME_MOTION, "garage"),
     TOPIC_ENTRY("/kitchen_steps/oper_flag/motion", AIO_HOME_MOTION, "garage"),
     TOPIC_ENTRY("/motionbox1/oper_flag/motion", AIO_HOME_MOTION, "basement"),
     TOPIC_ENTRY("/officeClock/motion", AIO_HOME_MOTION, "office"),
+    TOPIC_ENTRY("/upstairs_office/motion", AIO_HOME_MOTION, "upstairs-office"),
     TOPIC_ENTRY("zwave/shed/notification/endpoint_0/Home_Security/Motion_sensor_status", AIO_HOME_MOTION, "shed"),
 
     TOPIC_ENTRY("/garage_door/zelda", AIO_HOME_ZONE, "garage-east"),
@@ -89,14 +91,22 @@ LOCAL_ENTRIES = [
     TOPIC_ENTRY("/ring/motion/#", AIO_HOME_MOTION, ""),
     TOPIC_ENTRY("/ring/contact/#", AIO_HOME_CONTACT, ""),
     TOPIC_ENTRY("/zwave/waterpump/watts", AIO_HOME_ELECTRIC, "water-pump-power"),
-    TOPIC_ENTRY("/zwave/waterpump/kwh", AIO_HOME_ELECTRIC, "water-pump"),
+    ## use /electric_meter/ TOPIC_ENTRY("/zwave/waterpump/kwh", AIO_HOME_ELECTRIC, "water-pump"),
     TOPIC_ENTRY("/zwave/minisplit/watts", AIO_HOME_ELECTRIC, "mini-split-power"),
-    TOPIC_ENTRY("/zwave/minisplit/kwh", AIO_HOME_ELECTRIC, "mini-split"),
+    ## use /electric_meter/ TOPIC_ENTRY("/zwave/minisplit/kwh", AIO_HOME_ELECTRIC, "mini-split"),
+    TOPIC_ENTRY("/zwave/dishwasher/watts", AIO_HOME_ELECTRIC, "dish-washer-power"),
+    ## use /electric_meter/ TOPIC_ENTRY("/zwave/dishwasher/kwh", AIO_HOME_ELECTRIC, "dish-washer"),
+    TOPIC_ENTRY("/zwave/furnace/watts", AIO_HOME_ELECTRIC, "furnace-power"),
+    ## use /electric_meter/ TOPIC_ENTRY("/zwave/furnace/kwh", AIO_HOME_ELECTRIC, "furnace"),
+    TOPIC_ENTRY("/powerwall/#", AIO_HOME_ELECTRIC, ""),
     TOPIC_ENTRY("/electric_meter/#", AIO_HOME_ELECTRIC, ""),
+    TOPIC_ENTRY("/electric_watts/#", AIO_HOME_ELECTRIC_WATTS, ""),
     TOPIC_ENTRY("/sense/data/#", AIO_HOME_ELECTRIC, ""),
     TOPIC_ENTRY("/sense/device/#", AIO_HOME_ELECTRIC_DEVICE, ""),
-
-    TOPIC_ENTRY("/solar_rate/#", AIO_HOME_SOLAR_RATE, ""),
+    # Note: electric-meters.ev-charger == final session kwh is created 'for free' via /electric_meter/# above!
+    TOPIC_ENTRY("/ev_charger/kwh", AIO_HOME_EV_CHARGER, "session-kwh"),
+    TOPIC_ENTRY("/ev_charger/kw", AIO_HOME_EV_CHARGER, "session-kw"),
+    TOPIC_ENTRY("/ev_charger/oper_flag/#", AIO_HOME_EV_CHARGER, ""),
 ]
 
 MQTT_LOCAL_TOPICS = [entry.local for entry in LOCAL_ENTRIES]
@@ -110,9 +120,6 @@ AIO_TOPIC_LOCAL_TIME = "{}/local_time".format(AIO_TOPIC_PREFIX)
 
 # topics triggered from adafruit.io
 REMOTE_ENTRIES = [
-    # not really an aio triggered event, but goes to aio and comes back to be handled
-    TOPIC_ENTRY("/attic/motion", AIO_HOME_MOTION, AIO_HOME_MOTION_ATTIC),
-
     TOPIC_ENTRY(AIO_TOPIC_RANDOMIZER, "randomizer", "words"),
 ]
 

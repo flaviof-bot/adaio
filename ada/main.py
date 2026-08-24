@@ -4,6 +4,8 @@ import json
 import multiprocessing
 import subprocess
 import time
+import logging
+import os
 from datetime import datetime, timedelta
 from os import environ as env
 
@@ -12,8 +14,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from six.moves import queue
 
 from ada import const
-from ada import evbays
-from ada import evbays_state
 from ada import events
 from ada import log
 from ada import mqttadaio
@@ -101,37 +101,6 @@ class SenseEnergyProcess(ProcessBase):
             senseenergy.do_iterate()
 
 
-class EVBaysProcess(ProcessBase):
-    def __init__(self, eventq_param):
-        ProcessBase.__init__(self, None, eventq_param)
-        self.cmdq = evbays.do_init(self.putEvent)
-
-    def run(self):
-        logger.debug("evbays process started")
-        while True:
-            evbays.do_iterate()
-
-    @staticmethod
-    def do_fetch_now():
-        evbays.do_fetch(force=True)
-
-
-def handle_solar_rate(feed_id, payload):
-    rate_scale = 10000
-    trim_prefix = "home-"
-    rate_dict = None
-    if feed_id.startswith(trim_prefix):
-        feed_id = feed_id[len(trim_prefix):]
-    try:
-        rate_dict = json.loads(payload)
-        payload2 = (rate_dict['delta_decawatt_hour'] * rate_scale) / rate_dict['delta_seconds']
-    except Exception as e:
-        logger.warning("solar_rate calculation failed %s %s %s : %s",
-                       feed_id, payload, rate_dict, e)
-        return feed_id, 0
-    return feed_id, payload2
-
-
 def _handle_device_json(feed_id, payload, search_attributes):
     try:
         _payload_float = float(payload)
@@ -164,13 +133,7 @@ def handle_device_uptime(feed_id, payload):
 
 
 def handle_aio_cmd(_feed_id, payload):
-    if payload == const.AIO_RING_CMD_RESTART:
-        logger.debug("Got request to restart ring-mqtt process")
-        try:
-            subprocess.call(['/vagrant/ada/bin/svc_restart_ring-mqtt.sh'], shell=True, timeout=10)
-        except Exception as e:
-            logger.error("svc_restart_ring-mqtt.sh failed: %s", e)
-    elif payload == const.AIO_LOCAL_CMD_GET_LOCAL_TIME_WEATHER:
+    if payload == const.AIO_LOCAL_CMD_GET_LOCAL_TIME_WEATHER:
         logger.debug("Got explicit request to get time and weather")
         _fetch_local_time()
         oweather.do_fetch()
@@ -179,6 +142,7 @@ def handle_aio_cmd(_feed_id, payload):
 
 
 def handle_home_motion(feed_id, payload):
+    # Note: aio publish will also translate "on" and "off". See: mqttadaio.py publish
     translate_payload = {"true": 1, "false": 0}
     payload2 = translate_payload.get(payload, payload)
     # "zwave/shed/notification/endpoint_0/Home_Security/Motion_sensor_status"  value: "8"
@@ -196,27 +160,6 @@ def handle_home_zone(feed_id, payload):
     return feed_id, payload
 
 
-def _attic_cam_keep_alive():
-    logger.debug("aio attic-camera keep alive")
-    mqttadaio.publish(const.AIO_HOME_MOTION_ATTIC_CAM.split('.')[-1],
-                      'ka', const.AIO_HOME_MOTION)
-
-
-def _evbays_clear_ts():
-    logger.debug("aio evbays clear timestamps")
-    for bay_index in range(1, 7):
-        mqttadaio.publish(f"bay{bay_index}-simpletime", "--", const.AIO_EV_BAYS)
-
-
-def _clear_aio_mqtt_attic():
-    logger.debug("disabling aio attic event trigger now")
-    mqttadaio.publish(const.AIO_HOME_MOTION_ATTIC.split('.')[-1], '0', const.AIO_HOME_MOTION)
-
-
-def _fetch_attic_motion_value():
-    mqttadaio.receive_feed_value(const.AIO_HOME_MOTION_ATTIC)
-
-
 def _fetch_local_time():
     mqttadaio.get_local_time()
 
@@ -230,27 +173,6 @@ def _start_periodic_jobs():
     global scheduler
 
     # Ref: https://python.hotexamples.com/examples/apscheduler.schedulers.background/BackgroundScheduler/add_job/python-backgroundscheduler-add_job-method-examples.html
-    # Add jobs to make it alive when there is no motion for a long time
-    scheduler.add_job(_clear_aio_mqtt_attic, 'cron', day_of_week="wed,sun",
-                      hour='13', minute=23, second=45,
-                      id='periodic_clear_aio_mqtt_attic',
-                      replace_existing=True)
-    scheduler.add_job(_attic_cam_keep_alive, 'cron', day_of_week="mon,thu",
-                      hour='13', minute=23, second=45,
-                      id='periodic_attic_cam_keep_alive',
-                      replace_existing=True)
-    scheduler.add_job(_evbays_clear_ts, 'cron', day_of_week="*",
-                      hour='04', minute=44, second=44,
-                      id='periodic_evbays_clear_ts_am',
-                      replace_existing=True)
-    scheduler.add_job(_evbays_clear_ts, 'cron', day_of_week="*",
-                      hour='23', minute=23, second=23,
-                      id='periodic_evbays_clear_ts_pm',
-                      replace_existing=True)
-    # Add catch all clearing motion. Just in case... :)
-    scheduler.add_job(_fetch_attic_motion_value, 'interval', minutes=33,
-                      id='periodic_fetch_attic_motion_value',
-                      max_instances=1, next_run_time=datetime.now() + timedelta(minutes=22))
     scheduler.add_job(_set_should_check_children, 'interval', seconds=66,
                       id='periodic_set_should_check_children',
                       max_instances=1)
@@ -274,9 +196,7 @@ def processMqttMsgEvent(client_id, topic, payload):
     logger.debug("processMqttMsgEvent %s %s %s", client_id, topic, payload)
     if client_id == const.MQTT_CLIENT_LOCAL:
         payload_handlers = {
-            const.AIO_HOME_SOLAR_RATE: handle_solar_rate,
             const.AIO_LOCAL_CMD: handle_aio_cmd,
-            const.AIO_RING_CMD: handle_aio_cmd,
             const.AIO_HOME_MOTION: handle_home_motion,
             const.AIO_HOME_ZONE: handle_home_zone,
             const.AIO_UPTIME_MINUTES: handle_device_uptime,
@@ -304,25 +224,10 @@ def processMqttMsgEvent(client_id, topic, payload):
                 payload = copy.copy(payload_copy)
     elif client_id == const.MQTT_CLIENT_AIO_THROTTLE:
         logger.warning("getting hot: %s %s", topic, payload)
-        time.sleep(5)
+        time.sleep(10)
     elif client_id == const.MQTT_CLIENT_AIO:
         # rename variables to (try to) make it less confusing
         feed_id, topic = topic, None
-        if feed_id == const.AIO_HOME_MOTION_ATTIC:
-            logger.debug("got attic event trigger: %s %s", feed_id, payload)
-            # Adafruit.io does not trigger a '0', so we will make it happen here, after 10 seconds
-            if payload == '1':
-                scheduler.add_job(_clear_aio_mqtt_attic, 'date',
-                                  run_date=datetime.now() + timedelta(seconds=10),
-                                  id='clear_aio_mqtt_attic',
-                                  replace_existing=True)
-                # After clearing, do another check up to ensure that the motion did get
-                # cleared. This is needed to handle cases where multiple motions happen
-                # back to back.
-                scheduler.add_job(_fetch_attic_motion_value, 'date',
-                                  run_date=datetime.now() + timedelta(seconds=15),
-                                  id='verify_attic_motion_value',
-                                  replace_existing=True)
         topic_entry = const.MQTT_REMOTE_MAP.get(feed_id)
         if not topic_entry:
             return
@@ -332,17 +237,12 @@ def processMqttMsgEvent(client_id, topic, payload):
 
 
 def processMqttConnEvent(client_id, event, rc):
-    global bays_state
-
     logger.debug("processMqttConnEvent client_id: %s event: %s rc: %s", client_id, event, rc)
     if client_id == const.MQTT_CLIENT_AIO:
         mqttclient.do_mqtt_publish(const.AIO_TOPIC_CONNECTION,
                                    {const.MQTT_CONNECTED: "true"}.get(event, "false"))
         if event == const.MQTT_CONNECTED:
-            _attic_cam_keep_alive()
             _fetch_local_time()
-            if evbays.use_evbays():
-                bays_state.clear_cache()
     elif client_id == const.MQTT_CLIENT_LOCAL:
         oweather.do_fetch()
         senseenergy.do_fetch()
@@ -455,74 +355,12 @@ def processSenseEnergyEvent(event):
     mqttclient.do_mqtt_publish(key, value)
 
 
-def processEVBaysEvent(event):
-    global bays_state
-
-    if event.name != "EVBaysEvent":
-        logger.warning("Don't know how to process event %s: %s", event.name, event.description)
-        return
-    payload = event.params[0]
-    logger.info("EVBaysEvent: {}".format(payload))
-    try:
-        payload_dict = json.loads(payload)
-        bays, changed_bays, available_bays = bays_state.process(payload_dict)
-    except ValueError as e:
-        logger.warning("unable to parse json ev bays %s", e)
-        return
-
-    mqttclient.do_mqtt_publish(const.AIO_LOCAL_EVBAYS, bays)
-
-    last_update = datetime.now()
-    last_update_str = last_update.strftime("%a %I:%M")
-    mqttadaio.publish("last-update", last_update_str, const.AIO_EV_BAYS)
-    mqttadaio.publish("last-update-pretty", last_update.strftime("%c"), const.AIO_EV_BAYS)
-
-    # https://io.adafruit.com/icons-faq
-    STATUS_ICON_MAP = {'Available': 'empty', 'In use': 'automobile'}
-    STATUS_ICON_BAD = 'frown-o'
-
-    # for each changed bays, publish to adafruit io
-    for changed_bay in changed_bays:
-        bay_name = changed_bay.name.lower().replace("westford-", "bay")
-        mqttadaio.publish(f"{bay_name}-status", changed_bay.status, const.AIO_EV_BAYS)
-        mqttadaio.publish(f"{bay_name}-status-icon", STATUS_ICON_MAP.get(changed_bay.status, STATUS_ICON_BAD), const.AIO_EV_BAYS)
-        mqttadaio.publish(f"{bay_name}", changed_bay.statuscode, const.AIO_EV_BAYS)
-        mqttadaio.publish(f"{bay_name}-simpletime", changed_bay.simpletime, const.AIO_EV_BAYS)
-
-    # publish bays every time a change on bays is detected
-    if changed_bays:
-        mqttadaio.publish("bays", bays, const.AIO_EV_BAYS)
-        mqttadaio.publish("available", f"{available_bays}", const.AIO_EV_BAYS)
-
-    evbays_headers = {"Content-Type": "application/json"}
-    evbays_data = {"last-update": last_update_str, "bays": bays, "text": "EV Bays"}
-
-    # publish to evbays k8 app
-    ## try:
-    ##     r_do = requests.post("https://evbays.flaviof.dev/data", headers=evbays_headers, json=evbays_data)
-    ## except Exception as e:
-    ##     logger.error("failed post to evbays.flaviof.dev %s status_code %s", e, r_do.status_code)
-
-    # publish to evbays aws lambda
-    aws_endpoint = env.get('AWS_EVBAYS_ENDPOINT')
-    if not aws_endpoint:
-        return
-    aws_api_key = env.get('AWS_EVBAYS_API_KEY')
-    if aws_api_key:
-        evbays_headers["x-api-key"] = aws_api_key
-    try:
-        r_aws = requests.post(aws_endpoint, headers=evbays_headers, json=evbays_data)
-    except Exception as e:
-        logger.error("failed post to aws evbays %s status_code %s", e, r_aws.status_code)
-
-
 def processEvent(event):
     # Based on the event, call a lambda to make mqtt and smartswitch in sync
     syncFunHandlers = {"mqtt": processEventMqttClient,
                        "local_time": processEventLocalTime,
                        "open_weather": processOWeatherEvent,
                        "sense_energy": processSenseEnergyEvent,
-                       "ev_bays": processEVBaysEvent,
                        }
     cmdFun = syncFunHandlers.get(event.group)
     if not cmdFun:
@@ -567,31 +405,84 @@ def processEvents(timeout):
     except queue.Empty:
         pass
 
+def stop_child_processes(timeout=5):
+    for process in myProcesses:
+        if process.pid is not None and process.is_alive():
+            logger.info(
+                "Terminating child process %s, pid=%s",
+                process.__class__.__name__,
+                process.pid,
+            )
+            process.terminate()
+
+    for process in myProcesses:
+        if process.pid is None:
+            continue
+
+        process.join(timeout)
+
+        if process.is_alive():
+            logger.error(
+                "Child process %s, pid=%s did not terminate; killing it",
+                process.__class__.__name__,
+                process.pid,
+            )
+
+            if hasattr(process, "kill"):
+                process.kill()
+                process.join(timeout)
 
 def main():
     global scheduler, should_check_children
-    # ref: https://python.hotexamples.com/examples/apscheduler.schedulers.background/BackgroundScheduler/add_job/python-backgroundscheduler-add_job-method-examples.html
+
+    exit_status = 0
+
     job_defaults = {
-        'coalesce': True,
-        'max_instances': 1
+        "coalesce": True,
+        "max_instances": 1,
     }
+
     scheduler = BackgroundScheduler(job_defaults=job_defaults)
-    scheduler.start()
+
     try:
-        # Start our processes
-        [p.start() for p in myProcesses]
+        scheduler.start()
+
+        for process in myProcesses:
+            process.start()
+
         logger.debug("Starting main event processing loop")
         _start_periodic_jobs()
+
         while not stop_gracefully:
             processEvents(EVENTQ_GET_TIMEOUT)
+
             if should_check_children:
                 check_child_processes()
                 should_check_children = False
-    except Exception as e:
-        logger.error("Unexpected event: %s", e)
-    scheduler.shutdown(wait=False)
-    # make sure all children are terminated
-    [p.terminate() for p in myProcesses]
+
+    except Exception:
+        exit_status = 1
+        logger.exception("Unexpected failure in main process")
+
+    finally:
+        if scheduler is not None:
+            try:
+                scheduler.shutdown(wait=False)
+            except Exception:
+                logger.exception("Failed to shut down scheduler")
+                exit_status = 1
+
+        stop_child_processes()
+
+        if eventq is not None:
+            try:
+                eventq.close()
+                eventq.cancel_join_thread()
+            except Exception:
+                logger.exception("Failed to close event queue")
+                exit_status = 1
+
+    return exit_status
 
 
 # cfg_globals
@@ -601,7 +492,6 @@ eventq = None
 myProcesses = []
 scheduler = None
 should_check_children = False
-bays_state = None
 
 if __name__ == "__main__":
     logger = log.getLogger()
@@ -622,12 +512,12 @@ if __name__ == "__main__":
         myProcesses.append(SenseEnergyProcess(eventq))
     else:
         logger.info("Sense Energy process not needed")
-    if evbays.use_evbays():
-        evbays_process = EVBaysProcess(eventq)
-        bays_state = evbays_state.BayState(evbays_process)
-        myProcesses.append(evbays_process)
-    else:
-        logger.info("EV bays process not needed")
-    main()
-    if not stop_gracefully:
-        raise RuntimeError("main is exiting")
+    exit_status = main()
+
+    if exit_status != 0:
+        logger.error("main is exiting with status %d", exit_status)
+
+    logging.shutdown()
+
+    # Avoid multiprocessing finalizers preventing process termination.
+    os._exit(exit_status)

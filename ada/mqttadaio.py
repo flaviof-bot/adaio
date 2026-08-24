@@ -213,10 +213,10 @@ def do_iterate():
 # https://github.com/RazerM/ratelimiter
 def _limited(until):
     duration = int(round(until - time.time()))
-    logger.warning('Rate limited publish, sleeping for {:d} seconds'.format(duration))
+    logger.warning('Self rate limited publish, sleeping for {:d} seconds'.format(duration))
 
 
-@RateLimiter(max_calls=54, period=60, callback=_limited)
+@RateLimiter(max_calls=30, period=60, callback=_limited)
 def _publish(feed_id, value=None, group_id=None):
     global _state
     if not _state.aio_client:

@@ -65,7 +65,7 @@ def _notifySenseEnergyEvent(collected_values):
     for device in all_devices:
         value = 'on' if device in active_devices else 'off'
         _state.queueEventFun(events.SenseEnergyEvent(f"/sense/device/{device}", value))
-        time.sleep(1.6)
+        time.sleep(3.6)
 
 
 # =============================================================================
@@ -118,27 +118,20 @@ def _fetch():
                 logger.info(f"sense known devices are {_state.all_devices}")
 
             collected_values['active_power'] = _state.sense_api.active_power
-            # Include solar only if it is making meaningful power (more than 2 watts)
-            active_solar_power = _state.sense_api.active_solar_power
-            collected_values['active_solar_power'] = active_solar_power if (
-                    active_solar_power > 2) else 0
-            collected_values['grid_power'] = (collected_values['active_power'] -
-                    collected_values['active_solar_power'])
+            collected_values['grid_power'] = collected_values['active_power']
             collected_values['all_devices'] = [
                 device.lower().replace(' ', '_')
                 for device in _state.all_devices]
             collected_values['active_devices'] = {
                 device.lower().replace(' ', '_')
                 for device in _state.sense_api.active_devices
-                if device in _state.all_devices and (
-                    device.lower() != 'solar' or collected_values['active_solar_power'])}
+                if device in _state.all_devices and device.lower() != 'solar'}
 
             for sense_scale in sense_scales:
                 scale_key = 'consumption_{}'.format(sense_scale.lower())
-                collected_values[scale_key] = _state.sense_api.get_consumption_trend(sense_scale)
-
-                scale_key = 'production_{}'.format(sense_scale.lower())
-                collected_values[scale_key] = _state.sense_api.get_production_trend(sense_scale)
+                scale_value = _state.sense_api.get_consumption_trend(sense_scale)
+                if scale_value:
+                    collected_values[scale_key] = scale_value
 
         _state.sense_api_fails = 0
     except Exception as e:

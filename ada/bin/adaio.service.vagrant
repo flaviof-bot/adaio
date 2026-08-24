@@ -1,12 +1,20 @@
 [Unit]
 Description=Adafruit IO to local MQTT bridge
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-User=vagrant
+User=ff
 Type=simple
-ExecStartPre=/bin/bash -c 'while :; do [ -e /vagrant/ada/bin/start_adaio.sh ] && break; /bin/sleep 1; done'
-ExecStart=/vagrant/ada/bin/start_adaio.sh
+
+ExecStartPre=/bin/bash -c 'while :; do [ -x /home/ff/ada.git/ada/bin/start_adaio.sh ] && break; /bin/sleep 1; done'
+ExecStart=/home/ff/ada.git/ada/bin/start_adaio.sh
+
 Restart=on-failure
+RestartSec=10s
+
+TimeoutStopSec=15s
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target

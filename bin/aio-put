@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import sys
+
+from Adafruit_IO import Client as RestClient
+from Adafruit_IO import RequestError as RestRequestError
+
+
+HABIT_FEEDS = {
+    "1.name": "habit-tracker.habit-1-name",
+    "1.status": "habit-tracker.habit-1-status",
+    "2.name": "habit-tracker.habit-2-name",
+    "2.status": "habit-tracker.habit-2-status",
+    "3.name": "habit-tracker.habit-3-name",
+    "3.status": "habit-tracker.habit-3-status",
+    "streak": "habit-tracker.habit-tracker-streak",
+    "streak.name": "habit-tracker.habit-tracker-streak-name",
+}
+
+
+def die(msg: str, rc: int = 1) -> None:
+    print(f"ERROR: {msg}", file=sys.stderr)
+    sys.exit(rc)
+
+
+def read_stdin_value(keep_newline: bool) -> str:
+    value = sys.stdin.read()
+
+    # Usually when using printf or a heredoc, we do not want the final newline
+    # to become part of the Adafruit IO value.
+    # This removes exactly one trailing newline, but preserves all leading spaces.
+    if not keep_newline and value.endswith("\n"):
+        value = value[:-1]
+
+    return value
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Append an exact string value to an Adafruit IO feed."
+    )
+
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument(
+        "--feed",
+        help="Exact Adafruit IO feed key, for example habit-tracker.habit-1-name",
+    )
+    target.add_argument(
+        "--habit",
+        choices=sorted(HABIT_FEEDS.keys()),
+        help="Convenience alias: 1.name, 1.status, 2.name, 2.status, 3.name, 3.status, streak, streak.name",
+    )
+
+    value_src = parser.add_mutually_exclusive_group(required=True)
+    value_src.add_argument(
+        "--value",
+        help="Value to send. Quote it carefully if it starts with spaces.",
+    )
+    value_src.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read value from stdin. Best option for preserving leading spaces.",
+    )
+
+    parser.add_argument(
+        "--keep-trailing-newline",
+        action="store_true",
+        help="When using --stdin, keep the final newline if present.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be sent, but do not send it.",
+    )
+    parser.add_argument(
+        "--show-repr",
+        action="store_true",
+        help="Show Python repr(value), useful for verifying leading spaces.",
+    )
+
+    args = parser.parse_args()
+
+    username = os.environ.get("IO_USERNAME")
+    key = os.environ.get("IO_KEY")
+
+    if not username:
+        die("IO_USERNAME is not set. Did you source .secrets?")
+    if not key:
+        die("IO_KEY is not set. Did you source .secrets?")
+
+    feed_key = args.feed if args.feed else HABIT_FEEDS[args.habit]
+    value = read_stdin_value(args.keep_trailing_newline) if args.stdin else args.value
+
+    if args.show_repr or args.dry_run:
+        print(f"feed_key: {feed_key}")
+        print(f"value repr: {value!r}")
+        print(f"value len: {len(value)}")
+
+    if args.dry_run:
+        return 0
+
+    aio = RestClient(username, key)
+
+    try:
+        sent = aio.send_data(feed_key, value)
+    except RestRequestError as e:
+        die(f"Adafruit IO request failed: {e}")
+    except Exception as e:
+        die(f"unexpected failure: {e}")
+
+    print(f"sent to {feed_key}")
+    if hasattr(sent, "id"):
+        print(f"id: {sent.id}")
+    if hasattr(sent, "created_at"):
+        print(f"created_at: {sent.created_at}")
+    print(f"value repr: {value!r}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
