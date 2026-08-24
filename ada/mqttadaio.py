@@ -14,6 +14,8 @@ import stopit
 from ada import const
 from ada import events
 from ada import log
+from ada.publishfilter import PublishFilter
+from ada.publishfilter import feed_key
 from os import environ as env
 
 # Import Adafruit IO MQTT client. It is actually an mqtt client wrapper.
@@ -54,6 +56,10 @@ class State(object):
         self.aio_rest_client = None
         self.aio_rest_feeds = set()
         self.lastMsgTimeStamp = None
+        # Fork-boundary invariant: publish() runs in the parent, while _publish()
+        # runs in the child. Keep mutable dedup state in the child so only
+        # successful publishes refresh the last-published timestamp.
+        self.publish_filter = PublishFilter()
 
     @property
     def mqtt_client_id(self):
@@ -217,14 +223,14 @@ def _limited(until):
 
 
 @RateLimiter(max_calls=30, period=60, callback=_limited)
-def _publish(feed_id, value=None, group_id=None):
+def _publish_now(feed_id, value=None, group_id=None):
     global _state
     if not _state.aio_client:
         logger.warning("no client to publish mqtt feed %s %s %s", feed_id, value, group_id)
-        return
+        return False
     if not _state.aio_client_connected:
         logger.warning("not connected client to publish feed %s %s %s", feed_id, value, group_id)
-        return
+        return False
     try:
         with stopit.ThreadingTimeout(9.90, swallow_exc=False) as timeout_ctx:
             # logger.debug("publishing mqtt topic %s %s", topic, newState)
@@ -232,8 +238,23 @@ def _publish(feed_id, value=None, group_id=None):
     except Exception as e:
         logger.error("failed aio_client publish feed %s %s %s timeout_ctx %s %s",
                      feed_id, value, group_id, timeout_ctx, e)
-        return
+        return False
     logger.debug("published aio_client feed %s %s %s", feed_id, value, group_id)
+    return True
+
+
+def _publish(feed_id, value=None, group_id=None):
+    global _state
+    key = feed_key(feed_id, group_id)
+    if not _state.publish_filter.should_publish(key, value):
+        _state.publish_filter.record_suppressed()
+        logger.debug("suppressed unchanged aio_client feed %s %s counters %s",
+                     key, value, _state.publish_filter.counters)
+        return False
+    if not _publish_now(feed_id, value, group_id):
+        return False
+    _state.publish_filter.record_published(key, value)
+    return True
 
 
 # =============================================================================
@@ -254,6 +275,12 @@ def _enqueue_cmd(l_dill_raw):
 def publish(feed_id, payload, group_id):
     translate_payload = {"on": 1, "off": 0}
     payload2 = translate_payload.get(payload, payload)
+    key = feed_key(feed_id, group_id)
+    if _state.publish_filter.is_denied(key):
+        _state.publish_filter.record_denied()
+        logger.debug("denied aio_client feed %s %s counters %s",
+                     key, payload2, _state.publish_filter.counters)
+        return False
     params = [feed_id, payload2, group_id]
     return _enqueue_cmd((_publish, params))
 
